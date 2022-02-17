@@ -1,0 +1,14 @@
+XBE_TITLE = xbox_oc
+GEN_XISO = $(XBE_TITLE).iso
+SRCS = $(CURDIR)/main.c
+NXDK_DIR ?= $(CURDIR)/../..
+
+NXDK_SDL = y
+
+CFLAGS += -O2 -Wall -Wextra -pedantic
+CXXFLAGS += -O2 -Wall -Wextra -pedantic
+
+NXDK_CFLAGS += -O2 -Wall -Wextra -pedantic
+NXDK_CXXFLAGS += -O2 -Wall -Wextra -pedantic
+
+include $(NXDK_DIR)/Makefile
