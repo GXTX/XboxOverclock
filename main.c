@@ -21,7 +21,7 @@
 #include <windows.h>
 #include <SDL.h>
 
-#define BASE_CLOCK 16.66f
+#define BASE_CLOCK 16.667f
 
 // https://github.com/WulfyStylez/XBOverclock
 void calc_clock_params(int clk, int *n, int *m)
@@ -68,17 +68,21 @@ int main(void)
 	WRITE_PORT_BUFFER_ULONG((PULONG)0xCF8, &pci_addr, 1);
 	READ_PORT_BUFFER_ULONG((PULONG)0xCFC, &pci_buff, 1);
 
-	ULONG current_coeff = pci_buff;
-	int current_fsb = (int)((pci_buff >> 8) & 0xFF) * BASE_CLOCK;
-	int wanted_fsb = current_fsb;
+	int wanted_fsb = (int)((pci_buff >> 8) & 0xFF) * BASE_CLOCK;
 
-	debugPrint("FSB: %dMHz\n", current_fsb);
+	// There is a bug in the calculation where we can sometimes display way outside the acceptable range
+	if (wanted_fsb > 200 || wanted_fsb < 100) {
+		wanted_fsb = 133;
+	}
+
+	debugPrint("FSB: %dMHz\n", wanted_fsb);
 
 	debugMoveCursor(0, 10);
 	debugPrint("\nIt's possible for this tool to cause irreparable harm to your Xbox.\n");
 	debugPrint("\nThis program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n");
 	debugPrint("\nOnce the clock is set the machine should return to your dashboard, if you do not see \"SET\" the box has frozen and you should reboot and try again.\n");
 	debugPrint("\n==============================\n");
+	debugPrint("Tip: There's a bug in the calculation so you should set the frequency 1MHz more than you really want.\n");
 	debugPrint("Use the left and right \"DPAD\" to change the frequency.\n");
 	debugPrint("Press \"Start\" to apply (which will auto reboot).\n");
 	debugPrint("Press \"Back\" to exit.");
@@ -110,10 +114,12 @@ int main(void)
 					debugPrint("Setting FSB to: %dMHz\n", clk);
 					debugPrint("CPU: %dMHz\n", (int)(clk * 5.5f));
 
-					ULONG coeff = (current_coeff & ~0x0000FFFF) | (n << 8 | m);
-					debugPrint("0x%X\n", coeff);
+					ULONG coeff = (pci_buff & ~0x0000FFFF) | (n << 8 | m);
 
 					// wait
+					Sleep(500);
+					asm __volatile__("cli"); // disable interrupts
+					Sleep(500);
 					asm("nop");
 					asm("nop");
 					asm("nop");
@@ -130,6 +136,9 @@ int main(void)
 					asm("nop");
 					asm("nop");
 					asm("nop");
+					Sleep(500);
+					asm __volatile__("sti"); //enable interrupts
+					Sleep(500);
 
 					debugPrint("\nSET\n");
 
@@ -147,6 +156,6 @@ int main(void)
 
 the_end:
 	SDL_Quit();
-	Sleep(2000);
+	//Sleep(2000);
 	return 0;
 }
