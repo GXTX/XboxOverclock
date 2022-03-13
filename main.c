@@ -21,17 +21,17 @@
 #include <windows.h>
 #include <SDL.h>
 
-#define BASE_CLOCK 16.667f
-#define BASE_CLK 16667
+#define BASE_CLOCK_INT   16667
+#define BASE_CLOCK_FLOAT 16.667f
 
 // https://github.com/WulfyStylez/XBOverclock
 void calc_clock_params(int clk, int *n, int *m)
 {
 	int work1, work2, work4;
 
-	work1 = clk / BASE_CLOCK;
-	work2 = (clk * 2) / BASE_CLOCK;
-	work4 = (clk * 4) / BASE_CLOCK;
+	work1 = clk / BASE_CLOCK_FLOAT;
+	work2 = (clk * 2) / BASE_CLOCK_FLOAT;
+	work4 = (clk * 4) / BASE_CLOCK_FLOAT;
 
 	if (work2 * 2 != work4)
 	{
@@ -69,7 +69,7 @@ int main(void)
 	WRITE_PORT_BUFFER_ULONG((PULONG)0xCF8, &pci_addr, 1);
 	READ_PORT_BUFFER_ULONG((PULONG)0xCFC, &pci_buff, 1);
 
-	int wanted_fsb = (int)((pci_buff >> 8) & 0xFF) * BASE_CLOCK;
+	ULONG wanted_fsb = (int)((pci_buff >> 8) & 0xFF) * BASE_CLOCK_FLOAT;
 
 	// There is a bug in the calculation where we can sometimes display way outside the acceptable range
 	if (wanted_fsb > 200 || wanted_fsb < 100) {
@@ -77,8 +77,7 @@ int main(void)
 	}
 
 	ULONG current_nvclk = *((ULONG *)0xFD680500);
-	ULONG wanted_nvclk = (((BASE_CLK * ((current_nvclk & 0xFF00) >> 8)) / (1 << ((current_nvclk & 0x70000) >> 16))) / (current_nvclk & 0xFF)) / 10 / 10 / 10;
-
+	ULONG wanted_nvclk = (((BASE_CLOCK_INT * ((current_nvclk & 0xFF00) >> 8)) / (1 << ((current_nvclk & 0x70000) >> 16))) / (current_nvclk & 0xFF)) / 1000;
 
 	debugPrint("FSB   : %dMHz\n", wanted_fsb);
 	debugPrint("NVCLK : %dMHz\n", wanted_nvclk);
@@ -87,8 +86,8 @@ int main(void)
 	debugPrint("This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n");
 	debugPrint("Applying, the machine should return to your dashboard, if you do not see \"SET\" the box has frozen and you should reboot and try again.\n");
 	debugPrint("\n==============================\n");
-	debugPrint("Use the left and right \"DPAD\" to change the FSB frequency.\n");
-	debugPrint("Use the up and down \"DPAD\" to change the NVCLK frequency.\n");
+	debugPrint("Use the left and right \"DPAD\" to change the FSB.\n");
+	debugPrint("Use the up and down \"DPAD\" to change the NVCLK.\n");
 	debugPrint("Press \"Start\" to apply (which will auto reboot).\n");
 	debugPrint("Press \"Back\" to exit.");
 	debugResetCursor();
@@ -101,26 +100,10 @@ int main(void)
 			{
 				switch (event.cbutton.button)
 				{
-				case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-					debugResetCursor();
-					debugPrint("FSB   : %dMHz\n", --wanted_fsb);
-					debugPrint("NVCLK : %dMHz\n", wanted_nvclk);
-					break;
-				case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-					debugResetCursor();
-					debugPrint("FSB   : %dMHz\n", ++wanted_fsb);
-					debugPrint("NVCLK : %dMHz\n", wanted_nvclk);
-					break;
-				case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-					debugResetCursor();
-					debugPrint("FSB   : %dMHz\n", wanted_fsb);
-					debugPrint("NVCLK : %dMHz\n", --wanted_nvclk);
-					break;
-				case SDL_CONTROLLER_BUTTON_DPAD_UP:
-					debugResetCursor();
-					debugPrint("FSB   : %dMHz\n", wanted_fsb);
-					debugPrint("NVCLK : %dMHz\n", ++wanted_nvclk);
-					break;
+				case SDL_CONTROLLER_BUTTON_DPAD_LEFT: wanted_fsb--; break;
+				case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: wanted_fsb++; break;
+				case SDL_CONTROLLER_BUTTON_DPAD_DOWN: wanted_nvclk--; break;
+				case SDL_CONTROLLER_BUTTON_DPAD_UP: wanted_nvclk++; break;
 				case SDL_CONTROLLER_BUTTON_START:
 					SDL_Quit(); // have less stuff running
 
@@ -129,7 +112,7 @@ int main(void)
 					if (wanted_nvclk != 233) {
 						calc_clock_params(wanted_nvclk * 2, &n, &m);
 						debugClearScreen();
-						debugPrint("Setting NVCLK to: %dMHz\n", (BASE_CLK * n / m) / 2 / 10 / 10 / 10);
+						debugPrint("Setting NVCLK to: %dMHz\n", (BASE_CLOCK_INT * n / m) / 2 / 1000);
 
 						ULONG coeff = (current_nvclk & ~0x0000FFFF) | (n << 8) | m;
 
@@ -140,7 +123,7 @@ int main(void)
 
 					if (wanted_fsb != 133) {
 						calc_clock_params(wanted_fsb, &n, &m);
-						int clk = BASE_CLOCK * n / m;
+						int clk = BASE_CLOCK_FLOAT * n / m;
 						debugClearScreen();
 						debugPrint("Setting FSB to: %dMHz\n", clk);
 						debugPrint("CPU: %dMHz\n", (int)(clk * 5.5f));
@@ -182,6 +165,10 @@ int main(void)
 				default:
 					break;
 				}
+				
+				debugResetCursor();
+				debugPrint("FSB   : %dMHz\n", wanted_fsb);
+				debugPrint("NVCLK : %dMHz\n", wanted_nvclk);
 			}
 		}
 	}
