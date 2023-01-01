@@ -1,7 +1,7 @@
 /*
 	xbox_oc
 	----------------
-	Copyright (C) 2022 wutno (https://github.com/GXTX)
+	Copyright (C) 2022-2023 wutno (https://github.com/GXTX)
 	This program is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
 	the Free Software Foundation; either version 2 of the License, or
@@ -33,54 +33,65 @@ void calc_clock_params(int clk, int *n, int *m)
 	work2 = (clk * 2) / BASE_CLOCK_FLOAT;
 	work4 = (clk * 4) / BASE_CLOCK_FLOAT;
 
-	if (work2 * 2 != work4)
-	{
+	if (work2 * 2 != work4) {
 		*n = work4;
 		*m = 4;
-	}
-	else if (work1 * 2 != work2)
-	{
+	} else if (work1 * 2 != work2) {
 		*n = work2;
 		*m = 2;
-	}
-	else
-	{
+	} else {
 		*n = work1;
 		*m = 1;
 	}
+}
+
+ULONG get_GPU_frequency()
+{
+    ULONG nvclk_reg, current_nvclk;
+    nvclk_reg = *((volatile ULONG *)0xFD680500);
+
+    current_nvclk = BASE_CLOCK_INT * ((nvclk_reg & 0xFF00) >> 8);
+    current_nvclk /= 1 << ((nvclk_reg & 0x70000) >> 16);
+    current_nvclk /= nvclk_reg & 0xFF;
+    current_nvclk /= 1000;
+
+    return current_nvclk;
 }
 
 int main(void)
 {
 	XVideoSetMode(640, 480, 32, REFRESH_DEFAULT);
 
-	SDL_Init(SDL_INIT_GAMECONTROLLER);
 	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+	if (SDL_Init(SDL_INIT_GAMECONTROLLER) != 0) {
+		debugPrint("Unable to intialize SDL!\n");
+		Sleep(10000);
+		return 1;
+	}
 
 	SDL_Event event;
 	SDL_GameController *controller;
 
 	// We assume the user had a controller plugged into port 1
 	controller = SDL_GameControllerOpen(0);
-
-	// Read in the current FSB setting
-	ULONG pci_buff;
-	ULONG pci_addr = 0x8000036C;
-	WRITE_PORT_BUFFER_ULONG((PULONG)0xCF8, &pci_addr, 1);
-	READ_PORT_BUFFER_ULONG((PULONG)0xCFC, &pci_buff, 1);
-
-	ULONG wanted_fsb = (int)((pci_buff >> 8) & 0xFF) * BASE_CLOCK_FLOAT;
-
-	// There is a bug in the calculation where we can sometimes display way outside the acceptable range
-	if (wanted_fsb > 200 || wanted_fsb < 100) {
-		wanted_fsb = 133;
+	if (controller == NULL) {
+		debugPrint("Unable to initialize controller!\n");
+		Sleep(10000);
+		return 1;
 	}
 
-	ULONG current_nvclk = *((ULONG *)0xFD680500);
-	ULONG wanted_nvclk = (((BASE_CLOCK_INT * ((current_nvclk & 0xFF00) >> 8)) / (1 << ((current_nvclk & 0x70000) >> 16))) / (current_nvclk & 0xFF)) / 1000;
+	// Read in the current FSB setting
+	ULONG pci_buff = 0;
+	HalReadWritePCISpace(0, 0x60, 0x6C, &pci_buff, sizeof(pci_buff), FALSE);
+	ULONG original_fsb = (BASE_CLOCK_FLOAT / (pci_buff & 0xFF)) * ((pci_buff >> 8) & 0xFF);
+	ULONG wanted_fsb = original_fsb;
 
-	debugPrint("FSB   : %dMHz\n", wanted_fsb);
-	debugPrint("NVCLK : %dMHz\n", wanted_nvclk);
+	// GPU
+	ULONG original_nvclk = get_GPU_frequency();
+	ULONG wanted_nvclk = original_nvclk;
+
+	debugPrint("\nFSB   : %03luMHz\n", wanted_fsb);
+	debugPrint("NVCLK : %03luMHz\n", wanted_nvclk);
 
 	debugPrint("\nThis tool may cause irreparable harm to your Xbox.\n");
 	debugPrint("This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n");
@@ -92,14 +103,15 @@ int main(void)
 	debugPrint("Press \"Back\" to exit.");
 	debugResetCursor();
 
-	while (1)
-	{
-		while (SDL_PollEvent(&event))
-		{
-			if (event.type == SDL_CONTROLLERBUTTONDOWN)
-			{
-				switch (event.cbutton.button)
-				{
+	ULONGLONG counter = 0;
+
+	while (1) {
+		XVideoWaitForVBlank();
+		debugResetCursor();
+		debugPrint("%llu\n", counter++);
+		while (SDL_PollEvent(&event)) {
+			if (event.type == SDL_CONTROLLERBUTTONDOWN) {
+				switch (event.cbutton.button) {
 				case SDL_CONTROLLER_BUTTON_DPAD_LEFT: wanted_fsb--; break;
 				case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: wanted_fsb++; break;
 				case SDL_CONTROLLER_BUTTON_DPAD_DOWN: wanted_nvclk--; break;
@@ -108,54 +120,55 @@ int main(void)
 					SDL_Quit(); // have less stuff running
 
 					int n, m;
+					ULONG coeff;
 
-					if (wanted_nvclk != 233) {
-						calc_clock_params(wanted_nvclk * 2, &n, &m);
+					if (wanted_nvclk != original_nvclk) {
+						calc_clock_params((++wanted_nvclk) * 2, &n, &m);
 						debugClearScreen();
-						debugPrint("Setting NVCLK to: %dMHz\n", (BASE_CLOCK_INT * n / m) / 2 / 1000);
+						debugPrint("Setting NVCLK to: %03dMHz\n", (BASE_CLOCK_INT * n / m) / 2 / 1000);
 
-						ULONG coeff = (current_nvclk & ~0x0000FFFF) | (n << 8) | m;
+						coeff = *((volatile ULONG *)0xFD680500) & ~0x0000FFFF | n << 8 | m;
 
 						Sleep(500);
-						*((ULONG *)0xFD680500) = coeff;
+						*((volatile ULONG *)0xFD680500) = coeff;
 						Sleep(500);
 					}
 
-					if (wanted_fsb != 133) {
-						calc_clock_params(wanted_fsb, &n, &m);
+					if (wanted_fsb != original_fsb) {
+						calc_clock_params((++wanted_fsb), &n, &m);
 						int clk = BASE_CLOCK_FLOAT * n / m;
 						debugClearScreen();
 						debugPrint("Setting FSB to: %dMHz\n", clk);
 						debugPrint("CPU: %dMHz\n", (int)(clk * 5.5f));
 
-						ULONG coeff = (pci_buff & ~0x0000FFFF) | (n << 8) | m;
+						coeff = (pci_buff & ~0x0000FFFF) | (n << 8) | m;
 
-						// wait
+						// wait and disable interrupts
 						Sleep(500);
-						asm __volatile__("cli"); // disable interrupts
-						Sleep(500);
-						asm("nop");
-						asm("nop");
-						asm("nop");
-						asm("nop");
-						asm("nop");
+						__asm__("cli\n\t"
+								"sfence\n\t"
+								"nop\n\t"
+								"nop\n\t"
+								"nop\n\t"
+								"nop\n\t"
+								"nop\n\t"
+						);
 
-						WRITE_PORT_BUFFER_ULONG((PULONG)0xCF8, &pci_addr, 1);
-						WRITE_PORT_BUFFER_ULONG((PULONG)0xCFC, &coeff, 1);
+						HalReadWritePCISpace(0, 0x60, 0x6C, &coeff, sizeof(coeff), TRUE);
 
-						// wait
-						asm("nop");
-						asm("nop");
-						asm("nop");
-						asm("nop");
-						asm("nop");
-						asm("nop");
-						Sleep(500);
-						asm __volatile__("sti"); //enable interrupts
+						// wait and enable interrupts
+						__asm__("nop\n\t"
+								"nop\n\t"
+								"nop\n\t"
+								"nop\n\t"
+								"nop\n\t"
+								"sfence\n\t"
+								"sti\n\t"
+						);
 						Sleep(500);
 					}
 
-					debugPrint("\nSET\n");
+					debugPrint("SET\n");
 
 					goto the_end;
 					break; // unreachable
@@ -167,8 +180,8 @@ int main(void)
 				}
 				
 				debugResetCursor();
-				debugPrint("FSB   : %dMHz\n", wanted_fsb);
-				debugPrint("NVCLK : %dMHz\n", wanted_nvclk);
+				debugPrint("\nFSB   : %03luMHz\n", wanted_fsb);
+				debugPrint("NVCLK : %03luMHz\n", wanted_nvclk);
 			}
 		}
 	}

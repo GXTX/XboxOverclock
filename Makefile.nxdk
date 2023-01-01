@@ -5,10 +5,10 @@ NXDK_DIR ?= $(CURDIR)/../..
 
 NXDK_SDL = y
 
-CFLAGS += -Og -Wall -Wextra -pedantic
-CXXFLAGS += -Og -Wall -Wextra -pedantic
+CFLAGS += -O2 -Wall -Wextra -pedantic
+CXXFLAGS += -O2 -Wall -Wextra -pedantic
 
-NXDK_CFLAGS += -Og -Wall -Wextra -pedantic
-NXDK_CXXFLAGS += -Og -Wall -Wextra -pedantic
+NXDK_CFLAGS += -O2 -Wall -Wextra -pedantic
+NXDK_CXXFLAGS += -O2 -Wall -Wextra -pedantic
 
 include $(NXDK_DIR)/Makefile
