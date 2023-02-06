@@ -21,8 +21,15 @@
 #include <windows.h>
 #include <SDL.h>
 
-#define BASE_CLOCK_INT   16667
+#define CPU_BASE_MULTIPLIER 5.5f
+#define BASE_CLOCK_INT 16667
 #define BASE_CLOCK_FLOAT 16.667f
+
+ULONG original_fsb, wanted_fsb, hidden_fsb;
+ULONG original_nvclk, wanted_nvclk;
+int original_m, original_n, original_p, original_mp;
+int wanted_m, wanted_n, wanted_p, wanted_mp;
+ULONG pci_buff, cpu_coeff;
 
 // https://github.com/WulfyStylez/XBOverclock
 void calc_clock_params(int clk, int *n, int *m)
@@ -58,6 +65,47 @@ ULONG get_GPU_frequency()
     return current_nvclk;
 }
 
+void outputClocks()
+{
+	calc_clock_params(wanted_fsb, &wanted_n, &wanted_m);
+	hidden_fsb = (BASE_CLOCK_FLOAT / wanted_m) * wanted_n;
+	
+	ULONG cpu_clk = (int)(wanted_fsb * CPU_BASE_MULTIPLIER);
+	ULONG mem_clk = ((BASE_CLOCK_FLOAT / wanted_m) * (wanted_p * 2 * wanted_n)) / (2 * wanted_mp);
+
+	cpu_coeff = (pci_buff & ~0x00FFFFFF) | (wanted_mp << 20) | (wanted_p << 16) | (wanted_n << 8) | wanted_m;
+
+	debugPrint("\nFSB: %03luMHz, CPU: %03luMHz, RAM: %03luMHz\n", wanted_fsb, cpu_clk, mem_clk);
+	debugPrint("NVCLK : %03luMHz\n", wanted_nvclk);
+}
+
+static inline void writeCPUClocks(ULONG coeff)
+{
+	// wait and disable interrupts
+	Sleep(1000);
+	__asm__("cli\n\t"
+		"sfence\n\t"
+		"nop\n\t"
+		"nop\n\t"
+		"nop\n\t"
+		"nop\n\t"
+		"nop\n\t"
+	);
+
+	HalReadWritePCISpace(0, 0x60, 0x6C, &coeff, sizeof(coeff), TRUE);
+
+	// wait and enable interrupts
+	__asm__("nop\n\t"
+		"nop\n\t"
+		"nop\n\t"
+		"nop\n\t"
+		"nop\n\t"
+		"sfence\n\t"
+		"sti\n\t"
+	);
+	Sleep(1000);
+}
+
 int main(void)
 {
 	XVideoSetMode(640, 480, 32, REFRESH_DEFAULT);
@@ -81,17 +129,22 @@ int main(void)
 	}
 
 	// Read in the current FSB setting
-	ULONG pci_buff = 0;
+	pci_buff = 0;
 	HalReadWritePCISpace(0, 0x60, 0x6C, &pci_buff, sizeof(pci_buff), FALSE);
-	ULONG original_fsb = (BASE_CLOCK_FLOAT / (pci_buff & 0xFF)) * ((pci_buff >> 8) & 0xFF);
-	ULONG wanted_fsb = original_fsb;
+
+	original_m  = wanted_m  = pci_buff & 0xFF;
+	original_n  = wanted_n  = (pci_buff >> 8) & 0xFF;
+	original_p  = wanted_p  = (pci_buff >> 16) & 0xF;
+	original_mp = wanted_mp = (pci_buff >> 20) & 0xF;
+
+	original_fsb = (BASE_CLOCK_FLOAT / wanted_m) * wanted_n;
+	wanted_fsb = original_fsb;
 
 	// GPU
-	ULONG original_nvclk = get_GPU_frequency();
-	ULONG wanted_nvclk = original_nvclk;
+	original_nvclk = get_GPU_frequency();
+	wanted_nvclk = original_nvclk;
 
-	debugPrint("\nFSB   : %03luMHz\n", wanted_fsb);
-	debugPrint("NVCLK : %03luMHz\n", wanted_nvclk);
+	outputClocks();
 
 	debugPrint("\nThis tool may cause irreparable harm to your Xbox.\n");
 	debugPrint("This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n");
@@ -112,10 +165,12 @@ int main(void)
 		while (SDL_PollEvent(&event)) {
 			if (event.type == SDL_CONTROLLERBUTTONDOWN) {
 				switch (event.cbutton.button) {
-				case SDL_CONTROLLER_BUTTON_DPAD_LEFT: wanted_fsb--; break;
-				case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: wanted_fsb++; break;
-				case SDL_CONTROLLER_BUTTON_DPAD_DOWN: wanted_nvclk--; break;
-				case SDL_CONTROLLER_BUTTON_DPAD_UP: wanted_nvclk++; break;
+				case SDL_CONTROLLER_BUTTON_DPAD_LEFT: --wanted_fsb; break;
+				case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: ++wanted_fsb; break;
+				case SDL_CONTROLLER_BUTTON_DPAD_DOWN: --wanted_nvclk; break;
+				case SDL_CONTROLLER_BUTTON_DPAD_UP: ++wanted_nvclk; break;
+				case SDL_CONTROLLER_BUTTON_X: ++wanted_mp; break;
+				case SDL_CONTROLLER_BUTTON_B: --wanted_mp; break;
 				case SDL_CONTROLLER_BUTTON_START:
 					SDL_Quit(); // have less stuff running
 
@@ -127,45 +182,28 @@ int main(void)
 						debugClearScreen();
 						debugPrint("Setting NVCLK to: %03dMHz\n", (BASE_CLOCK_INT * n / m) / 2 / 1000);
 
-						coeff = *((volatile ULONG *)0xFD680500) & ~0x0000FFFF | n << 8 | m;
+						coeff = (*((volatile ULONG *)0xFD680500) & ~0x0000FFFF) | (n << 8) | m;
 
 						Sleep(500);
 						*((volatile ULONG *)0xFD680500) = coeff;
 						Sleep(500);
 					}
 
-					if (wanted_fsb != original_fsb) {
-						calc_clock_params((++wanted_fsb), &n, &m);
-						int clk = BASE_CLOCK_FLOAT * n / m;
+					// We MUST set this before CPU clocks
+					if (wanted_mp != original_mp) {
 						debugClearScreen();
-						debugPrint("Setting FSB to: %dMHz\n", clk);
-						debugPrint("CPU: %dMHz\n", (int)(clk * 5.5f));
+						debugPrint("Setting MemDiv to: %d\n", wanted_mp);
 
-						coeff = (pci_buff & ~0x0000FFFF) | (n << 8) | m;
+						// We don't use cpu_coeff as it might have FSB bits changed and we can't set both at the same time.
+						coeff = (pci_buff & ~0x00F00000) | (wanted_mp << 20);
+						writeCPUClocks(coeff);
+					}
 
-						// wait and disable interrupts
-						Sleep(500);
-						__asm__("cli\n\t"
-								"sfence\n\t"
-								"nop\n\t"
-								"nop\n\t"
-								"nop\n\t"
-								"nop\n\t"
-								"nop\n\t"
-						);
+					if (wanted_fsb != original_fsb) {
+						debugClearScreen();
+						debugPrint("Setting FSB to: %03dMHz\n", (int)(BASE_CLOCK_FLOAT * wanted_n / wanted_m));
 
-						HalReadWritePCISpace(0, 0x60, 0x6C, &coeff, sizeof(coeff), TRUE);
-
-						// wait and enable interrupts
-						__asm__("nop\n\t"
-								"nop\n\t"
-								"nop\n\t"
-								"nop\n\t"
-								"nop\n\t"
-								"sfence\n\t"
-								"sti\n\t"
-						);
-						Sleep(500);
+						writeCPUClocks(cpu_coeff);
 					}
 
 					debugPrint("SET\n");
@@ -180,8 +218,7 @@ int main(void)
 				}
 				
 				debugResetCursor();
-				debugPrint("\nFSB   : %03luMHz\n", wanted_fsb);
-				debugPrint("NVCLK : %03luMHz\n", wanted_nvclk);
+				outputClocks();
 			}
 		}
 	}
