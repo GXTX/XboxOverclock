@@ -67,22 +67,24 @@ ULONG get_GPU_frequency()
 
 void outputClocks()
 {
+	if (!wanted_mp)
+		wanted_mp++;
 	calc_clock_params(wanted_fsb, &wanted_n, &wanted_m);
 	hidden_fsb = (BASE_CLOCK_FLOAT / wanted_m) * wanted_n;
-	
+
 	ULONG cpu_clk = (int)(wanted_fsb * CPU_BASE_MULTIPLIER);
 	ULONG mem_clk = ((BASE_CLOCK_FLOAT / wanted_m) * (wanted_p * 2 * wanted_n)) / (2 * wanted_mp);
 
 	cpu_coeff = (pci_buff & ~0x00FFFFFF) | (wanted_mp << 20) | (wanted_p << 16) | (wanted_n << 8) | wanted_m;
 
-	debugPrint("\nFSB: %03luMHz, CPU: %03luMHz, RAM: %03luMHz\n", wanted_fsb, cpu_clk, mem_clk);
+	debugPrint("\nFSB: %03luMHz, CPU: %03luMHz, RAM: %3luMHz\n", wanted_fsb, cpu_clk, mem_clk);
 	debugPrint("NVCLK : %03luMHz\n", wanted_nvclk);
 }
 
 static inline void writeCPUClocks(ULONG coeff)
 {
 	// wait and disable interrupts
-	Sleep(1000);
+	KeStallExecutionProcessor(10000);
 	__asm__("cli\n\t"
 		"sfence\n\t"
 		"nop\n\t"
@@ -103,7 +105,7 @@ static inline void writeCPUClocks(ULONG coeff)
 		"sfence\n\t"
 		"sti\n\t"
 	);
-	Sleep(1000);
+	KeStallExecutionProcessor(10000);
 }
 
 int main(void)
@@ -189,8 +191,8 @@ int main(void)
 						Sleep(500);
 					}
 
-					// We MUST set this before CPU clocks
-					if (wanted_mp != original_mp) {
+					// If we're overclocking we need to make sure we write this first
+					if (wanted_mp != original_mp && wanted_fsb > original_fsb) {
 						debugClearScreen();
 						debugPrint("Setting MemDiv to: %d\n", wanted_mp);
 
