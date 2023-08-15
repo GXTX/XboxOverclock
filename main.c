@@ -81,10 +81,11 @@ void outputClocks()
 	debugPrint("NVCLK : %03luMHz\n", wanted_nvclk);
 }
 
-static inline void writeCPUClocks(ULONG coeff)
+static inline __attribute__((always_inline)) void writeCPUClocks(ULONG coeff)
 {
 	// wait and disable interrupts
-	KeStallExecutionProcessor(10000);
+	KeEnterCriticalRegion();
+	KeStallExecutionProcessor(100000);
 	__asm__("cli\n\t"
 		"sfence\n\t"
 		"nop\n\t"
@@ -105,12 +106,13 @@ static inline void writeCPUClocks(ULONG coeff)
 		"sfence\n\t"
 		"sti\n\t"
 	);
-	KeStallExecutionProcessor(10000);
+	KeStallExecutionProcessor(100000);
+	KeLeaveCriticalRegion();
 }
 
 int main(void)
 {
-	XVideoSetMode(640, 480, 32, REFRESH_DEFAULT);
+	XVideoSetMode(640, 480, 16, REFRESH_DEFAULT);
 
 	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 	if (SDL_Init(SDL_INIT_GAMECONTROLLER) != 0) {
@@ -150,10 +152,11 @@ int main(void)
 
 	debugPrint("\nThis tool may cause irreparable harm to your Xbox.\n");
 	debugPrint("This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n");
-	debugPrint("Applying, the machine should return to your dashboard, if you do not see \"SET\" the box has frozen and you should reboot and try again.\n");
+	debugPrint("After applying, the machine should return to your dashboard, if it does not: the box has frozen and you should reboot and try again.\n");
 	debugPrint("\n==============================\n");
 	debugPrint("Use the left and right \"DPAD\" to change the FSB.\n");
 	debugPrint("Use the up and down \"DPAD\" to change the NVCLK.\n");
+	debugPrint("Use \"X\" and \"A\" to change the memory divider.\n");
 	debugPrint("Press \"Start\" to apply (which will auto reboot).\n");
 	debugPrint("Press \"Back\" to exit.");
 	debugResetCursor();
@@ -208,9 +211,7 @@ int main(void)
 						writeCPUClocks(cpu_coeff);
 					}
 
-					debugPrint("SET\n");
-
-					goto the_end;
+					HalReturnToFirmware(HalQuickRebootRoutine);
 					break; // unreachable
 				case SDL_CONTROLLER_BUTTON_BACK:
 					goto the_end;
