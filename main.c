@@ -112,7 +112,7 @@ static inline __attribute__((always_inline)) void writeCPUClocks(ULONG coeff)
 
 int main(void)
 {
-	XVideoSetMode(640, 480, 16, REFRESH_DEFAULT);
+	XVideoSetMode(640, 480, 32, REFRESH_DEFAULT);
 
 	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 	if (SDL_Init(SDL_INIT_GAMECONTROLLER) != 0) {
